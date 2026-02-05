@@ -6,6 +6,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:injectable/injectable.dart';
 import '../../../../core/services/location_permission_service.dart';
 import '../../domain/entities/vehicle_location.dart';
+import '../../domain/usecases/get_current_location.dart';
 import '../../domain/usecases/get_vehicle_locations.dart';
 import '../../domain/usecases/watch_vehicle_location.dart';
 
@@ -26,6 +27,7 @@ class MapBloc extends Bloc<MapEvent, MapState> {
     this._getVehicleLocations,
     this._watchVehicleLocation,
     this._locationPermissionService,
+    this._getCurrentLocation,
   ) : super(const MapInitial()) {
     on<InitializeMapEvent>(_onInitializeMap);
     on<LoadVehicleLocationsEvent>(_onLoadVehicleLocations);
@@ -36,12 +38,15 @@ class MapBloc extends Bloc<MapEvent, MapState> {
     on<MoveCameraEvent>(_onMoveCamera);
     on<FocusVehicleEvent>(_onFocusVehicle);
     on<RequestLocationPermissionEvent>(_onRequestPermission);
+    on<CheckPermissionsEvent>(_onCheckPermissions);
+    on<CenterOnUserLocationEvent>(_onCenterOnUserLocation);
     on<DisposeMapEvent>(_onDispose);
   }
 
   final GetVehicleLocations _getVehicleLocations;
   final WatchVehicleLocation _watchVehicleLocation;
   final LocationPermissionService _locationPermissionService;
+  final GetCurrentLocation _getCurrentLocation;
 
   // Subscripciones y controladores
   StreamSubscription<dynamic>? _vehicleSubscription;
@@ -88,11 +93,12 @@ class MapBloc extends Bloc<MapEvent, MapState> {
       // STEP 4: Inicializar con estado vacío para Challhuahuacho
       // Esto permite que el mapa se dibuje INMEDIATAMENTE
       emit(
-        MapLoaded(
-          vehicles: const [],
+        const MapLoaded(
+          vehicles: [],
           hasLocationPermission: false, // Se actualizará cuando permisos estén listos
+          isLocationEnabled: false, // Se actualizará con CheckPermissionsEvent
           currentCameraPosition: CameraPosition(
-            target: const LatLng(-14.1197, -72.2458),
+            target: LatLng(-14.1197, -72.2458),
             zoom: 14.0,
           ),
         ),
@@ -129,8 +135,10 @@ class MapBloc extends Bloc<MapEvent, MapState> {
       },
       (permissionResult) {
         if (permissionResult.foregroundGranted) {
-          // Re-inicializar el mapa ahora que tenemos permisos
+          // Re-inicializar el mapa y luego verificar permisos
           add(const InitializeMapEvent());
+          // Verificar permisos para habilitar ubicación
+          add(const CheckPermissionsEvent());
         } else {
           emit(
             const MapError(
@@ -280,6 +288,87 @@ class MapBloc extends Bloc<MapEvent, MapState> {
 
       // Seleccionar vehículo
       emit(currentState.copyWith(selectedVehicle: vehicle));
+    }
+  }
+
+  /// Verifica permisos de ubicación (self-healing para app resume)
+  Future<void> _onCheckPermissions(
+    CheckPermissionsEvent event,
+    Emitter<MapState> emit,
+  ) async {
+    if (state is! MapLoaded) return;
+
+    final currentState = state as MapLoaded;
+
+    try {
+      // Verificar estado de servicios de ubicación
+      final serviceEnabled =
+          await _locationPermissionService.isLocationServiceEnabled();
+      
+      // Verificar permisos
+      final hasPermission =
+          await _locationPermissionService.hasLocationPermission();
+
+      // Actualizar estado con nueva info de permisos y servicios
+      emit(
+        currentState.copyWith(
+          hasLocationPermission: hasPermission,
+          isLocationEnabled: serviceEnabled && hasPermission,
+        ),
+      );
+
+      // Si ahora tenemos permisos, centrar automáticamente
+      if (hasPermission && serviceEnabled) {
+        add(const CenterOnUserLocationEvent());
+      }
+    } catch (e) {
+      debugPrint('⚠️ CheckPermissions failed: $e');
+      // No emitir error, mantener estado actual
+    }
+  }
+
+  /// Centra la cámara en la ubicación actual del usuario
+  Future<void> _onCenterOnUserLocation(
+    CenterOnUserLocationEvent event,
+    Emitter<MapState> emit,
+  ) async {
+    if (state is! MapLoaded) return;
+    if (_mapController == null) return;
+
+    final currentState = state as MapLoaded;
+
+    try {
+      // Usar el use case para obtener ubicación
+      final result = await _getCurrentLocation();
+
+      result.fold(
+        (failure) {
+          debugPrint('⚠️ No se pudo obtener ubicación: $failure');
+          // No mostramos error al usuario, solo log
+        },
+        (position) async {
+          // Animar cámara a ubicación del usuario
+          final target = LatLng(position.latitude, position.longitude);
+          final cameraUpdate = CameraUpdate.newLatLngZoom(target, 16.0);
+          
+          await _mapController!.animateCamera(cameraUpdate);
+
+          // Actualizar estado con nueva posición de cámara
+          emit(
+            currentState.copyWith(
+              currentCameraPosition: CameraPosition(
+                target: target,
+                zoom: 16.0,
+              ),
+              isLocationEnabled: true,
+            ),
+          );
+
+          debugPrint('✅ Cámara centrada en ubicación del usuario');
+        },
+      );
+    } catch (e) {
+      debugPrint('⚠️ Error al centrar en ubicación: $e');
     }
   }
 

@@ -90,6 +90,16 @@ class RequestLocationPermissionEvent extends MapEvent {
   const RequestLocationPermissionEvent();
 }
 
+/// Verificar permisos de ubicación (para self-healing en app resume)
+class CheckPermissionsEvent extends MapEvent {
+  const CheckPermissionsEvent();
+}
+
+/// Centrar cámara en la ubicación actual del usuario
+class CenterOnUserLocationEvent extends MapEvent {
+  const CenterOnUserLocationEvent();
+}
+
 /// Limpiar recursos del mapa
 class DisposeMapEvent extends MapEvent {
   const DisposeMapEvent();

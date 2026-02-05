@@ -20,6 +20,7 @@ import '../../features/map/data/datasources/map_remote_datasource_impl.dart'
     as _i175;
 import '../../features/map/data/repositories/map_repository_impl.dart' as _i457;
 import '../../features/map/domain/repositories/map_repository.dart' as _i973;
+import '../../features/map/domain/usecases/get_current_location.dart' as _i1009;
 import '../../features/map/domain/usecases/get_vehicle_locations.dart' as _i34;
 import '../../features/map/domain/usecases/update_driver_position.dart'
     as _i457;
@@ -42,6 +43,9 @@ extension GetItInjectableX on _i174.GetIt {
     gh.lazySingleton<_i895.Connectivity>(() => registerModule.connectivity);
     gh.lazySingleton<_i700.LocationPermissionService>(
       () => _i700.LocationPermissionService(),
+    );
+    gh.factory<_i1009.GetCurrentLocation>(
+      () => _i1009.GetCurrentLocation(gh<_i700.LocationPermissionService>()),
     );
     gh.lazySingleton<_i932.NetworkInfo>(
       () => _i932.NetworkInfoImpl(gh<_i895.Connectivity>()),
@@ -69,6 +73,7 @@ extension GetItInjectableX on _i174.GetIt {
         gh<_i34.GetVehicleLocations>(),
         gh<_i614.WatchVehicleLocation>(),
         gh<_i700.LocationPermissionService>(),
+        gh<_i1009.GetCurrentLocation>(),
       ),
     );
     return this;

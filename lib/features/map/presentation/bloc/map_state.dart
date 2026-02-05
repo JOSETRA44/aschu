@@ -21,12 +21,14 @@ class MapLoaded extends MapState {
     this.selectedVehicle,
     this.currentCameraPosition,
     this.hasLocationPermission = false,
+    this.isLocationEnabled = false,
   });
 
   final List<VehicleLocation> vehicles;
   final VehicleLocation? selectedVehicle;
   final CameraPosition? currentCameraPosition;
   final bool hasLocationPermission;
+  final bool isLocationEnabled;
 
   @override
   List<Object?> get props => [
@@ -34,6 +36,7 @@ class MapLoaded extends MapState {
         selectedVehicle,
         currentCameraPosition,
         hasLocationPermission,
+        isLocationEnabled,
       ];
 
   MapLoaded copyWith({
@@ -41,6 +44,7 @@ class MapLoaded extends MapState {
     VehicleLocation? selectedVehicle,
     CameraPosition? currentCameraPosition,
     bool? hasLocationPermission,
+    bool? isLocationEnabled,
   }) {
     return MapLoaded(
       vehicles: vehicles ?? this.vehicles,
@@ -49,6 +53,7 @@ class MapLoaded extends MapState {
           currentCameraPosition ?? this.currentCameraPosition,
       hasLocationPermission:
           hasLocationPermission ?? this.hasLocationPermission,
+      isLocationEnabled: isLocationEnabled ?? this.isLocationEnabled,
     );
   }
 }

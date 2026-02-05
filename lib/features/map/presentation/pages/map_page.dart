@@ -18,8 +18,38 @@ class MapPage extends StatelessWidget {
   }
 }
 
-class _MapPageContent extends StatelessWidget {
+class _MapPageContent extends StatefulWidget {
   const _MapPageContent();
+
+  @override
+  State<_MapPageContent> createState() => _MapPageContentState();
+}
+
+class _MapPageContentState extends State<_MapPageContent>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    // Registrar observer para detectar cambios de lifecycle
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    // Limpiar observer
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    // Self-healing: Cuando el usuario vuelve de configuración, verificar permisos
+    if (state == AppLifecycleState.resumed) {
+      context.read<MapBloc>().add(const CheckPermissionsEvent());
+    }
+  }
 
   Set<Marker> _buildMarkers(List<VehicleLocation> vehicles) {
     return vehicles.map((vehicle) {
@@ -225,6 +255,11 @@ class _MapPageContent extends StatelessWidget {
               onMapCreated: (controller) {
                 // Registrar controller en el BLoC para control de cámara
                 context.read<MapBloc>().setMapController(controller);
+                
+                // Si tenemos permisos, centrar en ubicación del usuario
+                if (state.isLocationEnabled) {
+                  context.read<MapBloc>().add(const CenterOnUserLocationEvent());
+                }
               },
               onCameraMove: (position) {
                 // Notificar al BLoC sobre movimiento de cámara
@@ -234,8 +269,8 @@ class _MapPageContent extends StatelessWidget {
                 // Notificar al BLoC cuando la cámara termina de moverse
                 context.read<MapBloc>().add(CameraIdleEvent(position));
               },
-              myLocationEnabled: state.hasLocationPermission,
-              myLocationButtonEnabled: state.hasLocationPermission,
+              myLocationEnabled: state.isLocationEnabled,
+              myLocationButtonEnabled: state.isLocationEnabled,
             );
           }
 
@@ -262,13 +297,12 @@ class _MapPageContent extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 // Botón para centrar en mi ubicación
-                if (state.hasLocationPermission)
+                if (state.isLocationEnabled)
                   FloatingActionButton(
                     heroTag: 'my_location',
                     mini: true,
                     onPressed: () {
-                      // TODO: Implementar centrado en ubicación del usuario
-                      context.read<MapBloc>().add(const LoadVehicleLocationsEvent());
+                      context.read<MapBloc>().add(const CenterOnUserLocationEvent());
                     },
                     tooltip: 'Mi ubicación',
                     child: const Icon(Icons.my_location),
