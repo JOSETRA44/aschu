@@ -35,6 +35,15 @@
         android:hardwareAccelerated="true"
         android:largeHeap="true">
         
+        <!-- CRITICAL FIX: Desactivar Impeller para GPUs Mali (Helio G85)
+             Problema: Impeller (Vulkan) es incompatible con Platform Views en Mali-G52
+             Evidencia: "Using the Impeller rendering backend (Vulkan)" + pantalla gris
+             Solución: Forzar OpenGL legacy renderer
+             Documentación: https://docs.flutter.dev/perf/impeller#android -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
+        
         <!-- Google Maps API Key - Injected securely via Secrets Gradle Plugin -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"

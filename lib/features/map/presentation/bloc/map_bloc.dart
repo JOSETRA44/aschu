@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart'; // Para debugPrint
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -57,39 +58,48 @@ class MapBloc extends Bloc<MapEvent, MapState> {
     emit(const MapLoading());
 
     try {
-      // 1. Verificar permisos de ubicación
-      final hasPermission = await _locationPermissionService.hasLocationPermission();
-
-      if (!hasPermission) {
-        emit(const MapWaitingPermission());
-        return;
-      }
-
-      // 2. Verificar servicio de ubicación habilitado
-      final serviceEnabled = await _locationPermissionService.isLocationServiceEnabled();
+      // CRITICAL FIX: Hacer la verificación de permisos NON-BLOCKING
+      // Problema: El chequeo síncrono bloquea el hilo principal (Davey! duration=1457ms)
+      // Solución: Permitir que el mapa intente cargar en paralelo con permisos
       
-      if (!serviceEnabled) {
-        emit(
-          const MapError(
-            'Los servicios de ubicación están deshabilitados. '
-            'Por favor, habilítalos en la configuración del dispositivo.',
-            isPermissionError: true,
-          ),
-        );
-        return;
-      }
+      // STEP 1: Check location permissions asíncronamente (sin await bloqueante)
+      _locationPermissionService.hasLocationPermission().then((hasPermission) {
+        if (!hasPermission && !isClosed) {
+          add(const RequestLocationPermissionEvent());
+        }
+      }).catchError((e) {
+        debugPrint('⚠️ Permission check failed (non-blocking): $e');
+      });
 
-      // 3. Inicializar con estado vacío para Challhuahuacho
+      // STEP 2: Continuar con inicialización del mapa SIN ESPERAR permisos
+      // El mapa puede cargar en gris, pero no crashea la app
+
+      // STEP 3: Cargar mapa INMEDIATAMENTE (sin bloquear por servicios de ubicación)
+      // Verificamos servicios en paralelo, pero no bloqueamos la carga del mapa
+      _locationPermissionService.isLocationServiceEnabled().then((serviceEnabled) {
+        if (!serviceEnabled && !isClosed) {
+          debugPrint('⚠️ Location services disabled, but map can still load');
+          // No emitir error, solo advertencia
+        }
+      }).catchError((e) {
+        debugPrint('⚠️ Location service check failed (non-blocking): $e');
+      });
+
+      // STEP 4: Inicializar con estado vacío para Challhuahuacho
+      // Esto permite que el mapa se dibuje INMEDIATAMENTE
       emit(
         MapLoaded(
           vehicles: const [],
-          hasLocationPermission: true,
+          hasLocationPermission: false, // Se actualizará cuando permisos estén listos
           currentCameraPosition: CameraPosition(
             target: const LatLng(-14.1197, -72.2458),
             zoom: 14.0,
           ),
         ),
       );
+
+      // STEP 5: Cargar ubicaciones de vehículos en paralelo (no bloqueante)
+      add(const LoadVehicleLocationsEvent());
     } catch (e) {
       emit(MapError('Error al inicializar el mapa: ${e.toString()}'));
     }

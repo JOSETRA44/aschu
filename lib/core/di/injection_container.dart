@@ -12,9 +12,13 @@ final GetIt sl = GetIt.instance;
   asExtension: true,
 )
 Future<void> configureDependencies() async {
-  // Registrar dependencias externas (no injectable)
-  sl.registerLazySingleton<Connectivity>(() => Connectivity());
-  sl.registerLazySingleton<SupabaseClient>(() => Supabase.instance.client);
+  // ========================================================================
+  // CLEAN SOLUTION: Injectable maneja TODAS las dependencias
+  // ========================================================================
+  // RegisterModule provee:
+  //   - SupabaseClient (desde Supabase.instance.client)
+  //   - Connectivity (desde Connectivity())
+  // NO registrar nada manualmente - Injectable lo hace automáticamente
 
   // Inicializar dependencias con injectable (NO usar await - init() es void)
   sl.init();

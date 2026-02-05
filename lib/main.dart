@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_maps_flutter_android/google_maps_flutter_android.dart';
@@ -9,29 +12,76 @@ import 'features/map/presentation/bloc/map_bloc.dart';
 import 'features/map/presentation/pages/map_page.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  // Capturar TODOS los errores en modo production
+  await runZonedGuarded<Future<void>>(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
 
-  // CRITICAL: Configurar Google Maps para usar Android View Surface
-  // Esto trabaja con el LEGACY Renderer de MainActivity.kt
-  // Requerido para GPUs Mali en dispositivos rurales (Infinix, Xiaomi)
-  final GoogleMapsFlutterPlatform mapsImplementation =
-      GoogleMapsFlutterPlatform.instance;
-  if (mapsImplementation is GoogleMapsFlutterAndroid) {
-    // Hybrid Composition mode - mejor para Impeller + LEGACY Renderer
-    mapsImplementation.useAndroidViewSurface = true;
-    debugPrint('✅ Google Maps: useAndroidViewSurface = true (Hybrid Composition)');
-  }
+      // ========================================================================
+      // CRITICAL FIX #1: Forzar LEGACY Renderer para GPUs Mali
+      // ========================================================================
+      // Problema: El log muestra "loadedRenderer: LATEST" que causa pantalla gris
+      // Solución: FORZAR AndroidMapRenderer.legacy ANTES de cualquier mapa
+      final GoogleMapsFlutterPlatform mapsImplementation =
+          GoogleMapsFlutterPlatform.instance;
+      
+      if (mapsImplementation is GoogleMapsFlutterAndroid) {
+        try {
+          // Paso 1: FORZAR Hybrid Composition (requerido para Impeller + Mali)
+          mapsImplementation.useAndroidViewSurface = true;
+          debugPrint('🔧 Google Maps: useAndroidViewSurface = true (Hybrid Composition)');
 
-  // Initialize Supabase (Add your credentials)
-  await Supabase.initialize(
-    url: 'YOUR_SUPABASE_URL',
-    anonKey: 'YOUR_SUPABASE_ANON_KEY',
+          // Paso 2: FORZAR LEGACY Renderer (crítico para Mali GPUs)
+          // IMPORTANTE: Usar .legacy, NO .platformDefault
+          final AndroidMapRenderer renderer = await mapsImplementation
+              .initializeWithRenderer(AndroidMapRenderer.legacy);
+          
+          debugPrint('✅ Maps Renderer FORZADO: $renderer');
+          debugPrint('🎯 Configuración completa: Hybrid Composition + LEGACY Renderer');
+        } catch (e, stackTrace) {
+          debugPrint('❌ CRITICAL: Maps initialization failed: $e');
+          debugPrint('Stack: $stackTrace');
+          // No detener la app, continuar con renderer por defecto
+        }
+      }
+
+      // ========================================================================
+      // CRITICAL FIX #2: Inicializar Supabase ANTES de DI
+      // ========================================================================
+      await Supabase.initialize(
+        url: 'YOUR_SUPABASE_URL',
+        anonKey: 'YOUR_SUPABASE_ANON_KEY',
+      );
+      debugPrint('✅ Supabase initialized');
+
+      // ========================================================================
+      // CRITICAL FIX #3: Inyección de Dependencias (sin duplicar SupabaseClient)
+      // ========================================================================
+      // Injectable YA registra SupabaseClient desde RegisterModule
+      // NO registrar manualmente en injection_container.dart
+      await configureDependencies();
+      debugPrint('✅ Dependency Injection configured');
+
+      runApp(const QawaqawaApp());
+    },
+    (error, stackTrace) {
+      // Log de errores no capturados en production
+      debugPrint('❌ UNCAUGHT ERROR: $error');
+      debugPrint('Stack: $stackTrace');
+      
+      // En modo debug, re-lanzar para ver el error completo
+      if (kDebugMode) {
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stackTrace,
+            library: 'main.dart',
+            context: ErrorDescription('Unhandled error in runZonedGuarded'),
+          ),
+        );
+      }
+    },
   );
-
-  // Initialize Dependency Injection
-  await configureDependencies();
-
-  runApp(const QawaqawaApp());
 }
 
 class QawaqawaApp extends StatelessWidget {
