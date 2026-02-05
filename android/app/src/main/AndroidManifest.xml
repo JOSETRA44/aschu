@@ -1,22 +1,49 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     
-    <!-- Permissions required for Google Maps -->
+    <!-- Permissions required for Google Maps and Geolocation -->
+    <!-- Base permissions -->
     <uses-permission android:name="android.permission.INTERNET"/>
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-    
-    <!-- Optional: Improve location accuracy -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     
+    <!-- Location permissions for Android 14/15 (SDK 34-36) -->
+    <!-- Fine location (GPS) - Precise location -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <!-- Coarse location (Network-based) - Approximate location -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    
+    <!-- Background location for Android 10+ (SDK 29+) -->
+    <!-- Only if your app needs background location -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+    
+    <!-- Foreground service for Android 14+ (SDK 34+) -->
+    <!-- Required if tracking location in foreground service -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    
+    <!-- Feature declarations -->
+    <uses-feature 
+        android:name="android.hardware.location.gps" 
+        android:required="false"/>
+    <uses-feature 
+        android:name="android.hardware.location.network" 
+        android:required="false"/>
+    
     <application
-        android:label="aschu"
+        android:label="Qawaqawa"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:hardwareAccelerated="true"
+        android:largeHeap="true">
         
         <!-- Google Maps API Key - Injected securely via Secrets Gradle Plugin -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="${MAPS_API_KEY}" />
+        
+        <!-- Force Hybrid Composition for Google Maps + Impeller compatibility -->
+        <meta-data
+            android:name="io.flutter.embedded_views_preview"
+            android:value="true" />
         
         <activity
             android:name=".MainActivity"
@@ -40,12 +67,14 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
+    
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
          https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.

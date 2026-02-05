@@ -51,7 +51,11 @@ dependencies:
 
   # Maps & Location
   google_maps_flutter: ^2.9.0
+  google_maps_flutter_android: ^2.14.7  # CRITICAL: Requerido para useAndroidViewSurface
+  google_maps_flutter_platform_interface: ^2.9.0
   geolocator: ^12.0.0
+  permission_handler: ^11.3.1
+  connectivity_plus: ^6.0.5  # CRITICAL: Detectar desconexión en cerros
 
 dev_dependencies:
   flutter_test:

@@ -36,6 +36,62 @@ class _MapPageContent extends StatelessWidget {
     }).toSet();
   }
 
+  /// Muestra diálogo para solicitar permisos de ubicación
+  void _showPermissionDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Permiso de Ubicación'),
+        content: const Text(
+          'Qawaqawa Logistics necesita acceso a tu ubicación para mostrar '
+          'vehículos en tiempo real y rutas optimizadas.\n\n'
+          'Por favor, otorga los permisos de ubicación precisa.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              // No hacer nada, quedarse en la pantalla esperando
+            },
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              context.read<MapBloc>().add(const RequestLocationPermissionEvent());
+            },
+            child: const Text('Permitir'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Muestra diálogo de error de permisos con opciones
+  void _showPermissionErrorDialog(BuildContext context, String message) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Error de Permisos'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cerrar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              context.read<MapBloc>().add(const RequestLocationPermissionEvent());
+            },
+            child: const Text('Intentar de nuevo'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -47,34 +103,118 @@ class _MapPageContent extends StatelessWidget {
             onPressed: () {
               context.read<MapBloc>().add(const LoadVehicleLocationsEvent());
             },
+            tooltip: 'Actualizar ubicaciones',
+          ),
+          IconButton(
+            icon: const Icon(Icons.location_on),
+            onPressed: () {
+              context.read<MapBloc>().add(const RequestLocationPermissionEvent());
+            },
+            tooltip: 'Verificar permisos',
           ),
         ],
       ),
-      body: BlocBuilder<MapBloc, MapState>(
+      body: BlocConsumer<MapBloc, MapState>(
+        // Listener para efectos secundarios (diálogos, snackbars)
+        listener: (context, state) {
+          if (state is MapWaitingPermission) {
+            _showPermissionDialog(context);
+          } else if (state is MapError && state.isPermissionError) {
+            _showPermissionErrorDialog(context, state.message);
+          }
+        },
+        // Builder para UI
         builder: (context, state) {
           if (state is MapLoading) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          if (state is MapError) {
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                  const CircularProgressIndicator(),
                   const SizedBox(height: 16),
                   Text(
-                    state.message,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () {
-                      context.read<MapBloc>().add(const InitializeMapEvent());
-                    },
-                    child: const Text('Retry'),
+                    'Inicializando mapa...',
+                    style: Theme.of(context).textTheme.bodyLarge,
                   ),
                 ],
+              ),
+            );
+          }
+
+          if (state is MapWaitingPermission) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.location_off,
+                    size: 64,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Permisos de ubicación requeridos',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Otorga permisos para continuar',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                        ),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      context.read<MapBloc>().add(const RequestLocationPermissionEvent());
+                    },
+                    icon: const Icon(Icons.location_on),
+                    label: const Text('Otorgar permisos'),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          if (state is MapError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      state.isPermissionError ? Icons.location_off : Icons.error_outline,
+                      size: 64,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      state.isPermissionError
+                          ? 'Error de Permisos'
+                          : 'Error al cargar mapa',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      state.message,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        if (state.isPermissionError) {
+                          context.read<MapBloc>().add(const RequestLocationPermissionEvent());
+                        } else {
+                          context.read<MapBloc>().add(const InitializeMapEvent());
+                        }
+                      },
+                      icon: Icon(state.isPermissionError ? Icons.location_on : Icons.refresh),
+                      label: Text(state.isPermissionError ? 'Otorgar permisos' : 'Reintentar'),
+                    ),
+                  ],
+                ),
               ),
             );
           }
@@ -83,25 +223,67 @@ class _MapPageContent extends StatelessWidget {
             return CustomMapView(
               markers: _buildMarkers(state.vehicles),
               onMapCreated: (controller) {
-                // Map created callback
+                // Registrar controller en el BLoC para control de cámara
+                context.read<MapBloc>().setMapController(controller);
               },
               onCameraMove: (position) {
-                // Camera move callback
+                // Notificar al BLoC sobre movimiento de cámara
+                context.read<MapBloc>().add(CameraMovedEvent(position));
               },
+              onCameraIdle: (position) {
+                // Notificar al BLoC cuando la cámara termina de moverse
+                context.read<MapBloc>().add(CameraIdleEvent(position));
+              },
+              myLocationEnabled: state.hasLocationPermission,
+              myLocationButtonEnabled: state.hasLocationPermission,
             );
           }
 
-          return const Center(child: CircularProgressIndicator());
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(
+                  'Cargando...',
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
+              ],
+            ),
+          );
         },
       ),
       floatingActionButton: BlocBuilder<MapBloc, MapState>(
         builder: (context, state) {
-          if (state is MapLoaded) {
-            return FloatingActionButton(
-              onPressed: () {
-                context.read<MapBloc>().add(const LoadVehicleLocationsEvent());
-              },
-              child: const Icon(Icons.my_location),
+          if (state is MapLoaded && state.vehicles.isNotEmpty) {
+            return Column(
+              mainAxisAlignment: MainAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                // Botón para centrar en mi ubicación
+                if (state.hasLocationPermission)
+                  FloatingActionButton(
+                    heroTag: 'my_location',
+                    mini: true,
+                    onPressed: () {
+                      // TODO: Implementar centrado en ubicación del usuario
+                      context.read<MapBloc>().add(const LoadVehicleLocationsEvent());
+                    },
+                    tooltip: 'Mi ubicación',
+                    child: const Icon(Icons.my_location),
+                  ),
+                const SizedBox(height: 12),
+                // Botón para actualizar vehículos
+                FloatingActionButton(
+                  heroTag: 'refresh',
+                  onPressed: () {
+                    context.read<MapBloc>().add(const LoadVehicleLocationsEvent());
+                  },
+                  tooltip: 'Actualizar vehículos',
+                  child: const Icon(Icons.directions_car),
+                ),
+              ],
             );
           }
           return const SizedBox.shrink();
