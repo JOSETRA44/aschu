@@ -45,8 +45,11 @@ class _MapPageContentState extends State<_MapPageContent>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     
+    debugPrint('🔄 AppLifecycleState changed: $state');
+    
     // Self-healing: Cuando el usuario vuelve de configuración, verificar permisos
     if (state == AppLifecycleState.resumed) {
+      debugPrint('✅ App RESUMED - Checking permissions...');
       context.read<MapBloc>().add(const CheckPermissionsEvent());
     }
   }
@@ -250,27 +253,98 @@ class _MapPageContentState extends State<_MapPageContent>
           }
 
           if (state is MapLoaded) {
-            return CustomMapView(
-              markers: _buildMarkers(state.vehicles),
-              onMapCreated: (controller) {
-                // Registrar controller en el BLoC para control de cámara
-                context.read<MapBloc>().setMapController(controller);
+            return Stack(
+              children: [
+                CustomMapView(
+                  markers: _buildMarkers(state.vehicles),
+                  onMapCreated: (controller) {
+                    debugPrint('🗺️ Map created - isLocationEnabled: ${state.isLocationEnabled}');
+                    
+                    // Registrar controller en el BLoC para control de cámara
+                    context.read<MapBloc>().setMapController(controller);
+                    
+                    // Si tenemos permisos, centrar en ubicación del usuario
+                    if (state.isLocationEnabled) {
+                      debugPrint('✅ Auto-centering on user location');
+                      context.read<MapBloc>().add(const CenterOnUserLocationEvent());
+                    } else {
+                      debugPrint('⚠️ Location not enabled yet');
+                    }
+                  },
+                  onCameraMove: (position) {
+                    // Notificar al BLoC sobre movimiento de cámara
+                    context.read<MapBloc>().add(CameraMovedEvent(position));
+                  },
+                  onCameraIdle: (position) {
+                    // Notificar al BLoC cuando la cámara termina de moverse
+                    context.read<MapBloc>().add(CameraIdleEvent(position));
+                  },
+                  myLocationEnabled: state.isLocationEnabled,
+                  myLocationButtonEnabled: state.isLocationEnabled,
+                ),
                 
-                // Si tenemos permisos, centrar en ubicación del usuario
-                if (state.isLocationEnabled) {
-                  context.read<MapBloc>().add(const CenterOnUserLocationEvent());
-                }
-              },
-              onCameraMove: (position) {
-                // Notificar al BLoC sobre movimiento de cámara
-                context.read<MapBloc>().add(CameraMovedEvent(position));
-              },
-              onCameraIdle: (position) {
-                // Notificar al BLoC cuando la cámara termina de moverse
-                context.read<MapBloc>().add(CameraIdleEvent(position));
-              },
-              myLocationEnabled: state.isLocationEnabled,
-              myLocationButtonEnabled: state.isLocationEnabled,
+                // Banner de permisos si no están habilitados
+                if (!state.isLocationEnabled)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: Material(
+                      elevation: 4,
+                      color: Theme.of(context).colorScheme.errorContainer,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.location_off,
+                              color: Theme.of(context).colorScheme.onErrorContainer,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Ubicación deshabilitada',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(context).colorScheme.onErrorContainer,
+                                    ),
+                                  ),
+                                  Text(
+                                    state.hasLocationPermission
+                                        ? 'Activa el GPS en configuración'
+                                        : 'Otorga permisos para ver tu ubicación',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Theme.of(context).colorScheme.onErrorContainer,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: () {
+                                debugPrint('🔘 Permission button pressed');
+                                context.read<MapBloc>().add(const RequestLocationPermissionEvent());
+                              },
+                              style: ElevatedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                              ),
+                              child: const Text('Habilitar'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             );
           }
 

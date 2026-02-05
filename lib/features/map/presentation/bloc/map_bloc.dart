@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart'; // Para debugPrint
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:injectable/injectable.dart';
 import '../../../../core/services/location_permission_service.dart';
@@ -104,52 +105,88 @@ class MapBloc extends Bloc<MapEvent, MapState> {
         ),
       );
 
-      // STEP 5: Cargar ubicaciones de vehículos en paralelo (no bloqueante)
+      // STEP 5: Verificar permisos automáticamente después de inicializar
+      // Esto detectará si ya se otorgaron permisos previamente
+      add(const CheckPermissionsEvent());
+      
+      // STEP 6: Cargar ubicaciones de vehículos en paralelo (no bloqueante)
       add(const LoadVehicleLocationsEvent());
     } catch (e) {
       emit(MapError('Error al inicializar el mapa: ${e.toString()}'));
     }
   }
 
-  /// Solicita permisos de ubicación
+  /// Solicita permisos de ubicación usando Geolocator directamente
   Future<void> _onRequestPermission(
     RequestLocationPermissionEvent event,
     Emitter<MapState> emit,
   ) async {
-    emit(const MapWaitingPermission());
-
-    final result = await _locationPermissionService.requestFullLocationAccess(
-      requestPrecise: true,
-      requestBackground: false,
-    );
-
-    result.fold(
-      (failure) {
+    debugPrint('📍 RequestLocationPermission event received');
+    
+    try {
+      // Verificar si los servicios de ubicación están habilitados
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      debugPrint('📡 Location services enabled: $serviceEnabled');
+      
+      if (!serviceEnabled) {
+        debugPrint('❌ GPS disabled - showing error');
         emit(
           const MapError(
-            'No se pudieron obtener los permisos de ubicación. '
-            'La aplicación requiere acceso a tu ubicación para funcionar.',
+            'Los servicios de ubicación están deshabilitados.\n'
+            'Por favor, activa el GPS en la configuración de tu dispositivo.',
             isPermissionError: true,
           ),
         );
-      },
-      (permissionResult) {
-        if (permissionResult.foregroundGranted) {
-          // Re-inicializar el mapa y luego verificar permisos
-          add(const InitializeMapEvent());
-          // Verificar permisos para habilitar ubicación
-          add(const CheckPermissionsEvent());
-        } else {
-          emit(
-            const MapError(
-              'Permisos de ubicación denegados. '
-              'Por favor, habilítalos en la configuración de la aplicación.',
-              isPermissionError: true,
-            ),
-          );
-        }
-      },
-    );
+        return;
+      }
+
+      // Verificar estado actual de permisos
+      LocationPermission permission = await Geolocator.checkPermission();
+      debugPrint('🔐 Current permission: $permission');
+
+      if (permission == LocationPermission.denied) {
+        debugPrint('🔔 Requesting permission...');
+        permission = await Geolocator.requestPermission();
+        debugPrint('📝 Permission after request: $permission');
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        debugPrint('🚫 Permission denied forever');
+        emit(
+          const MapError(
+            'Los permisos de ubicación fueron denegados permanentemente.\n'
+            'Por favor, habilítalos manualmente en Configuración > Aplicaciones > Aschu > Permisos.',
+            isPermissionError: true,
+          ),
+        );
+        return;
+      }
+
+      if (permission == LocationPermission.whileInUse ||
+          permission == LocationPermission.always) {
+        debugPrint('✅ Permission granted!');
+        
+        // Volver a cargar el mapa con permisos
+        add(const InitializeMapEvent());
+      } else {
+        debugPrint('❌ Permission denied');
+        emit(
+          const MapError(
+            'Permisos de ubicación denegados.\n'
+            'La aplicación necesita acceso a tu ubicación para funcionar correctamente.',
+            isPermissionError: true,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ Error requesting permission: $e');
+      emit(
+        MapError(
+          'Error al solicitar permisos: ${e.toString()}',
+          isPermissionError: true,
+        ),
+      );
+    }
   }
 
   /// Carga todas las ubicaciones de vehículos
@@ -296,18 +333,29 @@ class MapBloc extends Bloc<MapEvent, MapState> {
     CheckPermissionsEvent event,
     Emitter<MapState> emit,
   ) async {
-    if (state is! MapLoaded) return;
+    debugPrint('🔍 CheckPermissions event received');
+    
+    if (state is! MapLoaded) {
+      debugPrint('⚠️ State is not MapLoaded, skipping check');
+      return;
+    }
 
     final currentState = state as MapLoaded;
 
     try {
-      // Verificar estado de servicios de ubicación
-      final serviceEnabled =
-          await _locationPermissionService.isLocationServiceEnabled();
+      // USAR GEOLOCATOR DIRECTAMENTE para verificación precisa
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      debugPrint('📍 Location services enabled: $serviceEnabled');
       
-      // Verificar permisos
-      final hasPermission =
-          await _locationPermissionService.hasLocationPermission();
+      // Verificar permisos con Geolocator
+      final permission = await Geolocator.checkPermission();
+      debugPrint('🔐 Permission status: $permission');
+      
+      final hasPermission = permission == LocationPermission.always ||
+          permission == LocationPermission.whileInUse;
+      
+      debugPrint('✅ Has permission: $hasPermission');
+      debugPrint('🎯 Location enabled: ${serviceEnabled && hasPermission}');
 
       // Actualizar estado con nueva info de permisos y servicios
       emit(
@@ -317,9 +365,15 @@ class MapBloc extends Bloc<MapEvent, MapState> {
         ),
       );
 
+      debugPrint('🔄 State updated - isLocationEnabled: ${serviceEnabled && hasPermission}');
+
       // Si ahora tenemos permisos, centrar automáticamente
       if (hasPermission && serviceEnabled) {
+        debugPrint('🎉 Permisos OK! Centrando cámara...');
         add(const CenterOnUserLocationEvent());
+      } else {
+        if (!serviceEnabled) debugPrint('❌ GPS deshabilitado');
+        if (!hasPermission) debugPrint('❌ Sin permisos de ubicación');
       }
     } catch (e) {
       debugPrint('⚠️ CheckPermissions failed: $e');
@@ -332,25 +386,39 @@ class MapBloc extends Bloc<MapEvent, MapState> {
     CenterOnUserLocationEvent event,
     Emitter<MapState> emit,
   ) async {
-    if (state is! MapLoaded) return;
-    if (_mapController == null) return;
+    debugPrint('📍 CenterOnUserLocation event received');
+    
+    if (state is! MapLoaded) {
+      debugPrint('⚠️ State is not MapLoaded');
+      return;
+    }
+    
+    if (_mapController == null) {
+      debugPrint('⚠️ Map controller is null');
+      return;
+    }
 
     final currentState = state as MapLoaded;
+    debugPrint('🎯 Current location enabled: ${currentState.isLocationEnabled}');
 
     try {
+      debugPrint('📡 Getting current location...');
       // Usar el use case para obtener ubicación
       final result = await _getCurrentLocation();
 
       result.fold(
         (failure) {
-          debugPrint('⚠️ No se pudo obtener ubicación: $failure');
+          debugPrint('❌ No se pudo obtener ubicación: $failure');
           // No mostramos error al usuario, solo log
         },
         (position) async {
+          debugPrint('✅ Ubicación obtenida: ${position.latitude}, ${position.longitude}');
+          
           // Animar cámara a ubicación del usuario
           final target = LatLng(position.latitude, position.longitude);
           final cameraUpdate = CameraUpdate.newLatLngZoom(target, 16.0);
           
+          debugPrint('🎥 Animando cámara...');
           await _mapController!.animateCamera(cameraUpdate);
 
           // Actualizar estado con nueva posición de cámara
@@ -364,7 +432,7 @@ class MapBloc extends Bloc<MapEvent, MapState> {
             ),
           );
 
-          debugPrint('✅ Cámara centrada en ubicación del usuario');
+          debugPrint('🎉 Cámara centrada en ubicación del usuario!');
         },
       );
     } catch (e) {
