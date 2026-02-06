@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart'; // Para debugPrint
+import 'package:flutter/foundation.dart'; // Para debugPrint, unawaited
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:geolocator/geolocator.dart';
@@ -64,53 +64,43 @@ class MapBloc extends Bloc<MapEvent, MapState> {
     emit(const MapLoading());
 
     try {
-      // CRITICAL FIX: Hacer la verificación de permisos NON-BLOCKING
-      // Problema: El chequeo síncrono bloquea el hilo principal (Davey! duration=1457ms)
-      // Solución: Permitir que el mapa intente cargar en paralelo con permisos
+      // CRITICAL FIX: Inicialización NON-BLOCKING optimizada
+      // Patrón: Emit estado inicial → Dispatch eventos → Verificaciones asíncronas en background
       
-      // STEP 1: Check location permissions asíncronamente (sin await bloqueante)
-      _locationPermissionService.hasLocationPermission().then((hasPermission) {
-        if (!hasPermission && !isClosed) {
-          add(const RequestLocationPermissionEvent());
-        }
-      }).catchError((e) {
-        debugPrint('⚠️ Permission check failed (non-blocking): $e');
-      });
-
-      // STEP 2: Continuar con inicialización del mapa SIN ESPERAR permisos
-      // El mapa puede cargar en gris, pero no crashea la app
-
-      // STEP 3: Cargar mapa INMEDIATAMENTE (sin bloquear por servicios de ubicación)
-      // Verificamos servicios en paralelo, pero no bloqueamos la carga del mapa
-      _locationPermissionService.isLocationServiceEnabled().then((serviceEnabled) {
-        if (!serviceEnabled && !isClosed) {
-          debugPrint('⚠️ Location services disabled, but map can still load');
-          // No emitir error, solo advertencia
-        }
-      }).catchError((e) {
-        debugPrint('⚠️ Location service check failed (non-blocking): $e');
-      });
-
-      // STEP 4: Inicializar con estado vacío para Challhuahuacho
-      // Esto permite que el mapa se dibuje INMEDIATAMENTE
-      emit(
-        const MapLoaded(
-          vehicles: [],
-          hasLocationPermission: false, // Se actualizará cuando permisos estén listos
-          isLocationEnabled: false, // Se actualizará con CheckPermissionsEvent
-          currentCameraPosition: CameraPosition(
-            target: LatLng(-14.1197, -72.2458),
-            zoom: 14.0,
+      // STEP 1: Emitir estado inicial INMEDIATAMENTE
+      // Permite que el mapa se dibuje sin esperar verificaciones
+      if (!isClosed) {
+        emit(
+          const MapLoaded(
+            vehicles: [],
+            hasLocationPermission: false,
+            isLocationEnabled: false,
+            currentCameraPosition: CameraPosition(
+              target: LatLng(-14.1197, -72.2458),
+              zoom: 14.0,
+            ),
           ),
-        ),
-      );
+        );
+      }
 
-      // STEP 5: Verificar permisos automáticamente después de inicializar
-      // Esto detectará si ya se otorgaron permisos previamente
-      add(const CheckPermissionsEvent());
+      // STEP 2: Dispatch eventos para procesamiento asíncrono
+      // CheckPermissions y LoadVehicles se ejecutan en sus propios handlers
+      if (!isClosed) {
+        add(const CheckPermissionsEvent());
+        add(const LoadVehicleLocationsEvent());
+      }
       
-      // STEP 6: Cargar ubicaciones de vehículos en paralelo (no bloqueante)
-      add(const LoadVehicleLocationsEvent());
+      // STEP 3: Verificaciones en background (no bloqueantes)
+      // Usar unawaited para fire-and-forget sin bloquear
+      unawaited(
+        _locationPermissionService.hasLocationPermission().then((hasPermission) {
+          if (!hasPermission && !isClosed) {
+            add(const RequestLocationPermissionEvent());
+          }
+        }).catchError((e) {
+          debugPrint('⚠️ Permission check failed: $e');
+        }),
+      );
     } catch (e) {
       emit(MapError('Error al inicializar el mapa: ${e.toString()}'));
     }
@@ -130,13 +120,15 @@ class MapBloc extends Bloc<MapEvent, MapState> {
       
       if (!serviceEnabled) {
         debugPrint('❌ GPS disabled - showing error');
-        emit(
-          const MapError(
-            'Los servicios de ubicación están deshabilitados.\n'
-            'Por favor, activa el GPS en la configuración de tu dispositivo.',
-            isPermissionError: true,
-          ),
-        );
+        if (!isClosed) {
+          emit(
+            const MapError(
+              'Los servicios de ubicación están deshabilitados.\n'
+              'Por favor, activa el GPS en la configuración de tu dispositivo.',
+              isPermissionError: true,
+            ),
+          );
+        }
         return;
       }
 
@@ -152,13 +144,15 @@ class MapBloc extends Bloc<MapEvent, MapState> {
 
       if (permission == LocationPermission.deniedForever) {
         debugPrint('🚫 Permission denied forever');
-        emit(
-          const MapError(
-            'Los permisos de ubicación fueron denegados permanentemente.\n'
-            'Por favor, habilítalos manualmente en Configuración > Aplicaciones > Aschu > Permisos.',
-            isPermissionError: true,
-          ),
-        );
+        if (!isClosed) {
+          emit(
+            const MapError(
+              'Los permisos de ubicación fueron denegados permanentemente.\n'
+              'Por favor, habilítalos manualmente en Configuración > Aplicaciones > Aschu > Permisos.',
+              isPermissionError: true,
+            ),
+          );
+        }
         return;
       }
 
@@ -170,22 +164,26 @@ class MapBloc extends Bloc<MapEvent, MapState> {
         add(const InitializeMapEvent());
       } else {
         debugPrint('❌ Permission denied');
+        if (!isClosed) {
+          emit(
+            const MapError(
+              'Permisos de ubicación denegados.\n'
+              'La aplicación necesita acceso a tu ubicación para funcionar correctamente.',
+              isPermissionError: true,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Error requesting permission: $e');
+      if (!isClosed) {
         emit(
-          const MapError(
-            'Permisos de ubicación denegados.\n'
-            'La aplicación necesita acceso a tu ubicación para funcionar correctamente.',
+          MapError(
+            'Error al solicitar permisos: ${e.toString()}',
             isPermissionError: true,
           ),
         );
       }
-    } catch (e) {
-      debugPrint('⚠️ Error requesting permission: $e');
-      emit(
-        MapError(
-          'Error al solicitar permisos: ${e.toString()}',
-          isPermissionError: true,
-        ),
-      );
     }
   }
 
@@ -204,29 +202,39 @@ class MapBloc extends Bloc<MapEvent, MapState> {
 
     final result = await _getVehicleLocations();
 
+    // Verificar si BLoC fue cerrado durante operación async
+    if (isClosed) {
+      debugPrint('⚠️ BLoC closed during vehicle fetch');
+      return;
+    }
+
     result.fold(
       (failure) {
-        if (currentState is MapLoaded) {
-          // Mantener vehículos actuales en caso de error
-          emit(currentState);
-        } else {
-          emit(const MapError('Error al cargar ubicaciones de vehículos'));
+        if (!isClosed) {
+          if (currentState is MapLoaded) {
+            emit(currentState);
+          } else {
+            emit(const MapError('Error al cargar ubicaciones de vehículos'));
+          }
         }
       },
       (vehicles) {
-        if (currentState is MapLoaded) {
-          emit(
-            currentState.copyWith(
-              vehicles: vehicles,
-            ),
-          );
-        } else {
-          emit(
-            MapLoaded(
-              vehicles: vehicles,
-              hasLocationPermission: true,
-            ),
-          );
+        if (!isClosed) {
+          if (currentState is MapLoaded) {
+            emit(
+              currentState.copyWith(
+                vehicles: vehicles,
+              ),
+            );
+          } else {
+            emit(
+              const MapLoaded(
+                vehicles: [],
+                hasLocationPermission: false,
+                isLocationEnabled: false,
+              ),
+            );
+          }
         }
       },
     );
@@ -234,6 +242,8 @@ class MapBloc extends Bloc<MapEvent, MapState> {
 
   /// Actualiza la ubicación de un vehículo específico
   void _onUpdateLocation(UpdateLocationEvent event, Emitter<MapState> emit) {
+    if (isClosed) return;
+    
     if (state is MapLoaded) {
       final currentState = state as MapLoaded;
       final updatedVehicles = List<VehicleLocation>.from(currentState.vehicles);
@@ -262,10 +272,12 @@ class MapBloc extends Bloc<MapEvent, MapState> {
 
     _vehicleSubscription = _watchVehicleLocation(event.vehicleId).listen(
       (result) {
-        result.fold(
-          (failure) => add(const LoadVehicleLocationsEvent()),
-          (location) => add(UpdateLocationEvent(location)),
-        );
+        if (!isClosed) {
+          result.fold(
+            (failure) => add(const LoadVehicleLocationsEvent()),
+            (location) => add(UpdateLocationEvent(location)),
+          );
+        }
       },
     );
   }
@@ -279,6 +291,8 @@ class MapBloc extends Bloc<MapEvent, MapState> {
 
   /// Maneja el evento cuando la cámara termina de moverse
   void _onCameraIdle(CameraIdleEvent event, Emitter<MapState> emit) {
+    if (isClosed) return;
+    
     if (state is MapLoaded) {
       final currentState = state as MapLoaded;
       
@@ -357,6 +371,12 @@ class MapBloc extends Bloc<MapEvent, MapState> {
       debugPrint('✅ Has permission: $hasPermission');
       debugPrint('🎯 Location enabled: ${serviceEnabled && hasPermission}');
 
+      // Verificar si BLoC fue cerrado durante operación async
+      if (isClosed) {
+        debugPrint('⚠️ BLoC closed during permission check');
+        return;
+      }
+
       // Actualizar estado con nueva info de permisos y servicios
       emit(
         currentState.copyWith(
@@ -382,12 +402,14 @@ class MapBloc extends Bloc<MapEvent, MapState> {
   }
 
   /// Centra la cámara en la ubicación actual del usuario
+  /// FIXED: Patrón async/await lineal sin callbacks en fold
   Future<void> _onCenterOnUserLocation(
     CenterOnUserLocationEvent event,
     Emitter<MapState> emit,
   ) async {
     debugPrint('📍 CenterOnUserLocation event received');
     
+    // Validaciones tempranas
     if (state is! MapLoaded) {
       debugPrint('⚠️ State is not MapLoaded');
       return;
@@ -403,40 +425,58 @@ class MapBloc extends Bloc<MapEvent, MapState> {
 
     try {
       debugPrint('📡 Getting current location...');
-      // Usar el use case para obtener ubicación
+      
+      // PASO 1: Obtener ubicación (operación asíncrona)
       final result = await _getCurrentLocation();
 
-      result.fold(
+      // PASO 2: Verificar si BLoC fue cerrado durante operación async
+      if (isClosed) {
+        debugPrint('⚠️ BLoC closed during location fetch');
+        return;
+      }
+
+      // PASO 3: Procesar resultado con patrón lineal
+      final position = result.fold(
         (failure) {
           debugPrint('❌ No se pudo obtener ubicación: $failure');
-          // No mostramos error al usuario, solo log
+          return null; // Retornar null en caso de error
         },
-        (position) async {
-          debugPrint('✅ Ubicación obtenida: ${position.latitude}, ${position.longitude}');
-          
-          // Animar cámara a ubicación del usuario
-          final target = LatLng(position.latitude, position.longitude);
-          final cameraUpdate = CameraUpdate.newLatLngZoom(target, 16.0);
-          
-          debugPrint('🎥 Animando cámara...');
-          await _mapController!.animateCamera(cameraUpdate);
-
-          // Actualizar estado con nueva posición de cámara
-          emit(
-            currentState.copyWith(
-              currentCameraPosition: CameraPosition(
-                target: target,
-                zoom: 16.0,
-              ),
-              isLocationEnabled: true,
-            ),
-          );
-
-          debugPrint('🎉 Cámara centrada en ubicación del usuario!');
-        },
+        (position) => position, // Retornar position en caso de éxito
       );
+
+      // PASO 4: Early return si no hay posición
+      if (position == null) return;
+
+      debugPrint('✅ Ubicación obtenida: ${position.latitude}, ${position.longitude}');
+      
+      // PASO 5: Animar cámara (operación asíncrona)
+      final target = LatLng(position.latitude, position.longitude);
+      final cameraUpdate = CameraUpdate.newLatLngZoom(target, 16.0);
+      
+      debugPrint('🎥 Animando cámara...');
+      await _mapController!.animateCamera(cameraUpdate);
+
+      // PASO 6: Verificar nuevamente antes de emitir
+      if (isClosed) {
+        debugPrint('⚠️ BLoC closed during camera animation');
+        return;
+      }
+
+      // PASO 7: Emitir nuevo estado de forma segura
+      emit(
+        currentState.copyWith(
+          currentCameraPosition: CameraPosition(
+            target: target,
+            zoom: 16.0,
+          ),
+          isLocationEnabled: true,
+        ),
+      );
+
+      debugPrint('🎉 Cámara centrada en ubicación del usuario!');
     } catch (e) {
       debugPrint('⚠️ Error al centrar en ubicación: $e');
+      // No emitir error, mantener estado actual
     }
   }
 
